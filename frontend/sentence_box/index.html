@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: rgb(49, 51, 63);
+    background: transparent;
+  }
+  body { padding: 4px 0; }
+  #sentence {
+    font-size: 1.4rem;
+    font-weight: 600;
+    line-height: 1.45;
+    padding: 14px 18px;
+    cursor: text;
+    border: 1px solid #c4cbd4;
+    border-radius: 10px;
+    background: #fafbfc;
+  }
+  #sentence::selection, #sentence *::selection { background: #ffe58f; }
+  .scope {
+    font-size: 0.8rem;
+    color: #6a737d;
+    margin-top: 10px;
+    min-height: 1.15em;
+  }
+  .hint {
+    font-size: 0.75rem;
+    color: #8a8a8a;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+  <div id="sentence"></div>
+  <div class="scope" id="scope"></div>
+  <div class="hint">Highlight a word or phrase to scope the next preset question to that selection. Otherwise, the full sentence is used.</div>
+
+<script>
+  const SET_HEIGHT = "streamlit:setFrameHeight";
+  const READY = "streamlit:componentReady";
+  const RENDER = "streamlit:render";
+
+  function send(type, data) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data || {}), "*");
+  }
+  function setHeight() {
+    send(SET_HEIGHT, { height: document.documentElement.scrollHeight });
+  }
+
+  function writeSelection(text) {
+    try { localStorage.setItem("pex_selection", text); } catch (e) {}
+  }
+
+  function refreshScope() {
+    const sel = (window.getSelection() || "").toString().trim();
+    writeSelection(sel);
+    const scopeEl = document.getElementById("scope");
+    scopeEl.textContent = sel ? `Ask about: \u201C${sel}\u201D` : "";
+    setHeight();
+  }
+
+  document.addEventListener("selectionchange", refreshScope);
+
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.type !== RENDER) return;
+    const args = data.args || {};
+    document.getElementById("sentence").textContent = args.sentence || "";
+    document.getElementById("scope").textContent = "";
+    writeSelection("");
+    setHeight();
+  });
+
+  send(READY, { apiVersion: 1 });
+  setHeight();
+</script>
+</body>
+</html>

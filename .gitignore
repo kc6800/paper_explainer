@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files (PEX reads ~/.env, never commit a local one)
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# PDFs and sample papers (usually copyrighted, not ours to redistribute)
+*.pdf
+sample_papers/
+
+# PEX Study files (should live in ~/PEX_Studies/, but gitignored as a safety net)
+*.pex
