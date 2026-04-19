@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STUDIES_DIR = Path.home() / "PEX_Studies"
-STATE_VERSION = 2
+STATE_VERSION = 3
 STATE_FILE = "state.json"
 PDF_FILE = "paper.pdf"
 
@@ -68,6 +68,7 @@ def create_study(
         "sentences": extracted["sentences"],
         "paragraph_starts": extracted.get("paragraph_starts", [0]),
         "sections": extracted.get("sections", []),
+        "sentence_pages": extracted.get("sentence_pages", []),
         "idx": 0,
         "qa_by_idx": {},
     }
@@ -84,9 +85,10 @@ def open_study(path: Path) -> tuple[dict, bytes]:
             pdf_bytes = f.read()
     # qa_by_idx is serialized with string keys; convert back to int
     state["qa_by_idx"] = {int(k): v for k, v in state.get("qa_by_idx", {}).items()}
-    # Backward-compat defaults for v1 studies (no paragraphs / sections).
+    # Backward-compat defaults for older studies.
     state.setdefault("paragraph_starts", [0])
     state.setdefault("sections", [])
+    state.setdefault("sentence_pages", [])
     return state, pdf_bytes
 
 

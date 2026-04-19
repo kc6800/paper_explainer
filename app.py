@@ -6,15 +6,16 @@ with Claude available to clarify words, phrases, or ideas on demand.
 
 from __future__ import annotations
 
-import html
+import io
 import os
 import re
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from PIL import Image, ImageDraw
+
 APP_VERSION = "1.0"
-CONTEXT_WINDOW = 5
 
 import anthropic
 import fitz  # pymupdf
@@ -77,6 +78,70 @@ def _next_para(paragraph_starts: list[int], idx: int) -> int | None:
     candidates = [p for p in paragraph_starts if p > idx]
     return min(candidates) if candidates else None
 
+
+PDF_VIEWER_WIDTH = 720  # px — fixed output width of the rendered page image
+_PAGE_CACHE_KEY = "_pex_page_cache"
+_PAGE_CACHE_MAX = 10
+
+
+def _render_page_base(pdf_bytes: bytes, page_num: int, width_px: int):
+    """Render a PDF page to a PIL image at the given target width.
+
+    Returns (image, zoom). `image` is None if the page index is out of range.
+    """
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        if not (0 <= page_num < len(doc)):
+            return None, 1.0
+        page = doc[page_num]
+        zoom = width_px / page.rect.width
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGBA")
+        return img, zoom
+
+
+def _get_cached_page(study_key: str, pdf_bytes: bytes, page_num: int, width_px: int):
+    """Cache the base (un-highlighted) render per page with a small LRU bound."""
+    cache = st.session_state.setdefault(_PAGE_CACHE_KEY, {})
+    key = (study_key, page_num, width_px)
+    if key in cache:
+        # Bump to most-recent by re-inserting (dict preserves insertion order).
+        entry = cache.pop(key)
+        cache[key] = entry
+        return entry
+    base, zoom = _render_page_base(pdf_bytes, page_num, width_px)
+    if len(cache) >= _PAGE_CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    cache[key] = (base, zoom)
+    return base, zoom
+
+
+def render_sentence_page(
+    pdf_bytes: bytes,
+    study_key: str,
+    page_num: int,
+    rects: list,
+    width_px: int = PDF_VIEWER_WIDTH,
+) -> bytes | None:
+    """Return PNG bytes of the given PDF page with `rects` highlighted."""
+    base, zoom = _get_cached_page(study_key, pdf_bytes, page_num, width_px)
+    if base is None:
+        return None
+    img = base.copy()
+    if rects:
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        for rect in rects:
+            x0, y0, x1, y1 = rect
+            draw.rectangle(
+                [x0 * zoom, y0 * zoom, x1 * zoom, y1 * zoom],
+                fill=(255, 230, 90, 110),
+            )
+        img = Image.alpha_composite(img, overlay)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "PNG")
+    return buf.getvalue()
+
 load_dotenv(Path.home() / ".env")
 API_KEY = os.environ.get("PEX_CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
 
@@ -135,12 +200,13 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
                     if not text:
                         continue
                     avg_size = sum(s.get("size", 0.0) for s in spans) / len(spans)
-                    y0, y1 = line["bbox"][1], line["bbox"][3]
+                    x0, y0, x1, y1 = line["bbox"]
                     lines.append({
                         "text": text,
                         "size": avg_size,
                         "y0": y0,
                         "y1": y1,
+                        "bbox": [round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)],
                         "page": page_num,
                     })
                     sizes.append(round(avg_size, 1))
@@ -192,14 +258,13 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
                         )
                 flat_lines.extend(kept)
 
-        # Pass 3 — join and record per-line char offsets.
+        # Pass 3 — join and record per-line char offsets + piece length.
         pieces: list[str] = []
-        line_offsets: list[tuple[int, dict]] = []
+        line_offsets: list[tuple[int, int, dict]] = []  # (offset, piece_len, line)
         for line in flat_lines:
             if pieces:
                 pieces.append(" ")
             offset = sum(len(p) for p in pieces)
-            line_offsets.append((offset, line))
             txt = line["text"]
             # Ensure headings terminate so the sentence splitter doesn't fuse
             # them with the next body sentence.
@@ -208,6 +273,7 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
             ):
                 txt = txt + "."
             pieces.append(txt)
+            line_offsets.append((offset, len(txt), line))
 
         text = "".join(pieces).strip()
 
@@ -232,17 +298,33 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
 
     # Paragraph starts (always includes 0).
     para = {0}
-    for offset, line in line_offsets:
+    for offset, _piece_len, line in line_offsets:
         if line.get("starts_para"):
             para.add(idx_for_offset(offset))
     paragraph_starts = sorted(para)
+
+    # Per-sentence page + highlight rects (on the first page the sentence
+    # touches). A sentence may span multiple lines on that page — we
+    # collect all overlapping line bboxes as rects.
+    sentence_pages: list[dict] = []
+    for i in range(len(sentences)):
+        s_start, s_end = sentence_offsets[i], sentence_offsets[i + 1]
+        by_page: dict[int, list[list[float]]] = {}
+        for offset, piece_len, line in line_offsets:
+            if offset < s_end and (offset + piece_len) > s_start:
+                by_page.setdefault(line["page"], []).append(line["bbox"])
+        if by_page:
+            first = min(by_page)
+            sentence_pages.append({"page": first, "rects": by_page[first]})
+        else:
+            sentence_pages.append({"page": 0, "rects": []})
 
     # Sections: prefer PDF outline; fall back to detected headings.
     sections: list[dict] = []
     if toc:
         # First sentence index on each page (first line we kept on that page).
         first_idx_on_page: dict[int, int] = {}
-        for offset, line in line_offsets:
+        for offset, _piece_len, line in line_offsets:
             pg = line["page"]
             if pg not in first_idx_on_page:
                 first_idx_on_page[pg] = idx_for_offset(offset)
@@ -258,7 +340,7 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
             if idx is not None:
                 sections.append({"title": title.strip(), "idx": idx, "level": level})
     else:
-        for offset, line in line_offsets:
+        for offset, _piece_len, line in line_offsets:
             if line.get("is_heading"):
                 sections.append({
                     "title": line["text"].strip().rstrip("."),
@@ -280,6 +362,7 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
         "sentences": sentences,
         "paragraph_starts": paragraph_starts,
         "sections": sections,
+        "sentence_pages": sentence_pages,
     }
 
 
@@ -593,7 +676,8 @@ def render_reading() -> None:
             st.rerun()
         st.markdown(f"**{st.session_state.study_path.stem}**")
         st.caption(f"Source: {state['paper_filename']}")
-        st.markdown(f"Sentence **{idx + 1}** of **{total}**")
+        pct = int(round(100 * (idx + 1) / total))
+        st.markdown(f"Sentence **{idx + 1}** of **{total}** ({pct}%)")
         st.progress((idx + 1) / total)
 
         # Search — jump to a sentence containing a word or phrase.
@@ -638,28 +722,29 @@ def render_reading() -> None:
     left, right = st.columns([3, 2])
 
     with left:
-        st.caption("Context")
-        start = max(0, idx - CONTEXT_WINDOW)
-        end = min(total, idx + CONTEXT_WINDOW + 1)
-
-        def dim_block(indices) -> str:
-            parts = []
-            for i in indices:
-                distance = abs(i - idx)
-                opacity = max(0.25, 0.65 - 0.08 * distance)
-                parts.append(
-                    f"<div style='opacity:{opacity:.2f}; margin:6px 0; "
-                    f"line-height:1.5'>{html.escape(sentences[i])}</div>"
-                )
-            return "".join(parts)
-
-        if start < idx:
-            st.markdown(dim_block(range(start, idx)), unsafe_allow_html=True)
-
         sentence_box(sentence=sentences[idx], key=f"sb_{idx}")
 
-        if idx + 1 < end:
-            st.markdown(dim_block(range(idx + 1, end)), unsafe_allow_html=True)
+        # Source PDF viewer — shows the page containing the active sentence
+        # with the sentence's line rects highlighted.
+        sent_pages = state.get("sentence_pages") or []
+        loc = sent_pages[idx] if idx < len(sent_pages) else None
+        if loc and st.session_state.paper_bytes:
+            page_num = int(loc.get("page", 0))
+            rects = loc.get("rects", []) or []
+            img_bytes = render_sentence_page(
+                st.session_state.paper_bytes,
+                str(st.session_state.study_path),
+                page_num,
+                rects,
+            )
+            if img_bytes:
+                st.caption(f"Page {page_num + 1}")
+                st.image(img_bytes, use_container_width=True)
+        else:
+            st.caption(
+                "PDF viewer not available for this Study — re-create it from the "
+                "source PDF to enable page highlights."
+            )
 
     with right:
         prev_col, next_col = st.columns(2)
@@ -724,6 +809,26 @@ def render_reading() -> None:
             history.append({"role": "user", "content": question})
             history.append({"role": "assistant", "content": answer})
             autosave()
+            # Auto-scroll the parent page so the newest assistant message is
+            # brought into view. The script runs inside a zero-height iframe;
+            # querySelectorAll on window.parent.document reaches the main app.
+            st.components.v1.html(
+                """
+                <script>
+                  requestAnimationFrame(() => {
+                    const msgs = window.parent.document
+                      .querySelectorAll('[data-testid="stChatMessage"]');
+                    if (msgs.length) {
+                      msgs[msgs.length - 1].scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }
+                  });
+                </script>
+                """,
+                height=0,
+            )
 
 
 # ---------- Entry point ----------
