@@ -1,50 +1,56 @@
 # PEX — Paper Explainer
 
-A Streamlit app that walks you through a research paper one sentence at a time,
-with Claude on hand to explain any word, phrase, or idea along the way.
+A local Streamlit app that walks you through a research paper one sentence at
+a time, with Claude on hand to clarify any word, phrase, or idea along the
+way. Upload a PDF, get stuck on a sentence, highlight the part you don't
+understand, and ask — all without leaving the page.
 
-## Setup
+## Features
+
+- **Sentence-by-sentence reading** with the source PDF page shown alongside,
+  lines of the active sentence highlighted.
+- **Q&A grounded in the full paper** — ask freeform questions or pick from
+  four preset prompts (*Explain simply*, *Define terms*, *Why does this
+  matter?*, *Give an example*).
+- **Highlight-to-scope** — select a phrase inside the active sentence and a
+  preset will target just that phrase instead of the whole sentence.
+- **Navigation**: sentence and paragraph stepping, clickable section outline
+  (from the PDF's embedded TOC when present), full-text search.
+- **Keyboard shortcuts**: `←` / `→` for sentences, `Shift+←` / `Shift+→`
+  for paragraphs, `1`–`4` for presets, `q` to focus chat, `Esc` to release
+  focus.
+- **Studies**: each paper's progress + Q&A history are saved in a single
+  `.pex` file under `~/PEX_Studies/`. Auto-saved on every action.
+
+## Quick Start
 
 ```bash
+git clone https://github.com/kc6800/paper_explainer.git
 cd paper_explainer
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...
-```
 
-## Run
+# Add your Anthropic API key to ~/.env:
+#   PEX_CLAUDE_API_KEY=sk-ant-...
 
-```bash
 streamlit run app.py
 ```
 
-## Studies
+Open `http://localhost:8501`, upload a PDF on the Home screen, give the
+Study a name, click **Create**, and you're reading.
 
-PEX organizes work into **Studies**. A Study is a single `.pex` file that
-bundles the source PDF together with your progress (current sentence + Q&A
-history). Studies are auto-saved on every action, so you never have to think
-about Ctrl+S.
+## Documentation
 
-On launch, PEX shows a **Home** screen with two options:
-
-- **New Study** — upload a PDF, give the Study a name, click Create.
-- **Open Study** — resume from the list of recent Studies.
-
-All Studies live in `~/PEX_Studies/` by default. A `.pex` file is just a ZIP
-archive containing `paper.pdf` + `state.json`, so you can inspect or back one
-up with any standard tool.
-
-## Reading
-
-Use **Previous / Next** (or the jump box in the sidebar) to move through the
-paper one sentence at a time. The sentences above and below the current one are
-shown dimmed for context. Ask questions in the right-hand pane — each answer is
-grounded in the full paper, and the Q&A history is kept per-sentence so you can
-return to an earlier spot and still see what you asked.
+- [`docs/user-guide.md`](docs/user-guide.md) — detailed setup, features,
+  keyboard shortcuts, troubleshooting.
+- [`docs/architecture.md`](docs/architecture.md) — file layout, `.pex`
+  format, PDF extraction pipeline, custom components, AI integration.
 
 ## Notes
 
-- Uses `claude-opus-4-7` with adaptive thinking.
-- The full paper text is sent with prompt caching so repeat questions are cheap.
-- PDF text extraction is best-effort; multi-column layouts and heavy math may
-  produce rough sentence splits.
+- Uses `claude-opus-4-7` with adaptive thinking and prompt caching — the
+  full paper is cached on the first question so follow-ups are cheap.
+- PDF extraction is best-effort. Multi-column layouts and scanned-image
+  PDFs without a text layer can produce rough results.
+- PEX is a single-user local app; see the architecture doc for the
+  tradeoffs of turning it into a hosted service.
