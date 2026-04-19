@@ -25,6 +25,9 @@ _sentence_box = components.declare_component(
 _preset_bar = components.declare_component(
     "pex_preset_bar", path=str(_FRONTEND / "preset_bar")
 )
+_keyboard = components.declare_component(
+    "pex_keyboard", path=str(_FRONTEND / "keyboard")
+)
 
 
 def sentence_box(sentence: str, key: Optional[str] = None) -> None:
@@ -33,3 +36,7 @@ def sentence_box(sentence: str, key: Optional[str] = None) -> None:
 
 def preset_bar(key: Optional[str] = None) -> Optional[dict]:
     return _preset_bar(key=key, default=None)
+
+
+def keyboard(key: Optional[str] = None) -> Optional[dict]:
+    return _keyboard(key=key, default=None)

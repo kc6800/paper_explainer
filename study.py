@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 STUDIES_DIR = Path.home() / "PEX_Studies"
-STATE_VERSION = 1
+STATE_VERSION = 2
 STATE_FILE = "state.json"
 PDF_FILE = "paper.pdf"
 
@@ -46,9 +47,14 @@ def create_study(
     name: str,
     paper_filename: str,
     pdf_bytes: bytes,
-    sentences: list[str],
+    extracted: dict,
 ) -> Path:
-    """Create a new .pex file. Raises FileExistsError if the name is taken."""
+    """Create a new .pex file. Raises FileExistsError if the name is taken.
+
+    `extracted` is the dict returned by `extract_structured` — its
+    `sentences`, `paragraph_starts`, and `sections` are persisted into
+    `state.json`.
+    """
     ensure_studies_dir()
     path = STUDIES_DIR / f"{safe_name(name)}.pex"
     if path.exists():
@@ -59,7 +65,9 @@ def create_study(
         "paper_filename": paper_filename,
         "created_at": now,
         "updated_at": now,
-        "sentences": sentences,
+        "sentences": extracted["sentences"],
+        "paragraph_starts": extracted.get("paragraph_starts", [0]),
+        "sections": extracted.get("sections", []),
         "idx": 0,
         "qa_by_idx": {},
     }
@@ -76,6 +84,9 @@ def open_study(path: Path) -> tuple[dict, bytes]:
             pdf_bytes = f.read()
     # qa_by_idx is serialized with string keys; convert back to int
     state["qa_by_idx"] = {int(k): v for k, v in state.get("qa_by_idx", {}).items()}
+    # Backward-compat defaults for v1 studies (no paragraphs / sections).
+    state.setdefault("paragraph_starts", [0])
+    state.setdefault("sections", [])
     return state, pdf_bytes
 
 
@@ -86,11 +97,28 @@ def save_study(path: Path, state: dict, pdf_bytes: bytes) -> None:
     _write(path, state, pdf_bytes)
 
 
+def delete_study(path: Path) -> None:
+    """Remove a .pex file. Silent no-op if it's already gone."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def _write(path: Path, state: dict, pdf_bytes: bytes) -> None:
-    # Atomic write: build in a temp file then rename into place so a crash
-    # mid-save can't leave a half-written .pex on disk.
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(STATE_FILE, json.dumps(state, indent=2, ensure_ascii=False))
-        zf.writestr(PDF_FILE, pdf_bytes)
-    tmp.replace(path)
+    # Atomic write: build in a unique temp file then rename into place so a
+    # crash mid-save can't leave a half-written .pex on disk. The uuid suffix
+    # prevents concurrent saves (from rapid reruns) from colliding on the
+    # same temp filename.
+    tmp = path.with_suffix(path.suffix + f".tmp.{uuid.uuid4().hex}")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(STATE_FILE, json.dumps(state, indent=2, ensure_ascii=False))
+            zf.writestr(PDF_FILE, pdf_bytes)
+        tmp.replace(path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass

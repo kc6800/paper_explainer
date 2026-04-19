@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>html, body { margin: 0; padding: 0; height: 0; overflow: hidden; }</style>
+</head>
+<body>
+<script>
+  const SET_VALUE = "streamlit:setComponentValue";
+  const SET_HEIGHT = "streamlit:setFrameHeight";
+  const READY = "streamlit:componentReady";
+
+  function send(type, data) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data || {}), "*");
+  }
+  function setValue(value) { send(SET_VALUE, { value, dataType: "json" }); }
+
+  const PRESETS = {
+    "1": "explain_simply",
+    "2": "define_terms",
+    "3": "why_matters",
+    "4": "give_example",
+  };
+
+  function isTyping(target) {
+    if (!target) return false;
+    const tag = target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (target.isContentEditable) return true;
+    return false;
+  }
+
+  function focusChatInput() {
+    const doc = window.parent.document;
+    const el =
+      doc.querySelector('[data-testid="stChatInputTextArea"]') ||
+      doc.querySelector('[data-testid="stChatInput"] textarea') ||
+      doc.querySelector('textarea[placeholder]');
+    if (el) {
+      el.focus();
+      // Scroll into view in case the input is below the fold.
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
+  function handler(event) {
+    if (event.isComposing || event.repeat) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+    const k = event.key;
+
+    // Escape works in every context — releases focus from text inputs so
+    // arrow keys and other shortcuts work again.
+    if (k === "Escape") {
+      const active = window.parent.document.activeElement;
+      if (active && typeof active.blur === "function") active.blur();
+      return;
+    }
+
+    if (isTyping(event.target)) return;
+
+    let action = null;
+
+    if (k === "ArrowRight") action = { type: event.shiftKey ? "next_para" : "next" };
+    else if (k === "ArrowLeft") action = { type: event.shiftKey ? "prev_para" : "prev" };
+    else if (!event.shiftKey && PRESETS[k]) action = { type: "preset", preset: PRESETS[k] };
+    else if ((k === "q" || k === "Q") && !event.shiftKey) {
+      event.preventDefault();
+      focusChatInput();
+      return;
+    }
+
+    if (!action) return;
+    event.preventDefault();
+    try { action.selection = localStorage.getItem("pex_selection") || ""; } catch (e) { action.selection = ""; }
+    action.nonce = Date.now() + Math.random();
+    setValue(action);
+  }
+
+  // Re-register cleanly on every render so a rerun doesn't leave stale listeners.
+  const parentDoc = window.parent.document;
+  if (window.parent._pexKeyboardListener) {
+    parentDoc.removeEventListener("keydown", window.parent._pexKeyboardListener, true);
+  }
+  window.parent._pexKeyboardListener = handler;
+  parentDoc.addEventListener("keydown", handler, true);
+  // Also listen on this iframe's own document in case focus lands here.
+  document.addEventListener("keydown", handler, true);
+
+  send(READY, { apiVersion: 1 });
+  send(SET_HEIGHT, { height: 0 });
+</script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+[client]
+# "viewer" hides developer items (Deploy, Rerun) while keeping the Settings
+# menu — which is where the light/dark theme toggle and wide-mode option live.
+toolbarMode = "viewer"
