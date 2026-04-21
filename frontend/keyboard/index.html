@@ -61,8 +61,8 @@
 
     let action = null;
 
-    if (k === "ArrowRight") action = { type: event.shiftKey ? "next_para" : "next" };
-    else if (k === "ArrowLeft") action = { type: event.shiftKey ? "prev_para" : "prev" };
+    if (k === "ArrowRight") action = { type: event.shiftKey ? "next_page" : "next" };
+    else if (k === "ArrowLeft") action = { type: event.shiftKey ? "prev_page" : "prev" };
     else if (!event.shiftKey && PRESETS[k]) action = { type: "preset", preset: PRESETS[k] };
     else if ((k === "q" || k === "Q") && !event.shiftKey) {
       event.preventDefault();

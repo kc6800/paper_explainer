@@ -14,13 +14,13 @@ understand, and ask — all without leaving the page.
   matter?*, *Give an example*).
 - **Highlight-to-scope** — select a phrase inside the active sentence and a
   preset will target just that phrase instead of the whole sentence.
-- **Navigation**: sentence and paragraph stepping, clickable section outline
+- **Navigation**: sentence and page stepping, clickable section outline
   (from the PDF's embedded TOC when present; Claude infers one
   semantically when it isn't), full-text search.
 - **In-app source view**: the relevant PDF page is shown in a scrollable
   pane that auto-scrolls to the highlighted lines of the current sentence.
 - **Keyboard shortcuts**: `←` / `→` for sentences, `Shift+←` / `Shift+→`
-  for paragraphs, `1`–`4` for presets, `q` to focus chat, `Esc` to release
+  for pages, `1`–`4` for presets, `q` to focus chat, `Esc` to release
   focus.
 - **Studies**: each paper's progress + Q&A history are saved in a single
   `.pex` file under `~/PEX_Studies/`. Auto-saved on every action.

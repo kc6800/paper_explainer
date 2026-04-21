@@ -70,13 +70,30 @@ def _search_sentences(
     return hits
 
 
-def _prev_para(paragraph_starts: list[int], idx: int) -> int | None:
-    candidates = [p for p in paragraph_starts if p < idx]
+def _page_starts(sentence_pages: list[dict]) -> list[int]:
+    """Return the sentence indices where each page begins, in reading order.
+
+    Built from the per-sentence `sentence_pages` mapping (which tags each
+    sentence with the first PDF page it touches). The first entry is always
+    0 as long as the paper has any sentences.
+    """
+    starts: list[int] = []
+    last_page: int | None = None
+    for i, loc in enumerate(sentence_pages):
+        page = int(loc.get("page", 0)) if isinstance(loc, dict) else 0
+        if page != last_page:
+            starts.append(i)
+            last_page = page
+    return starts
+
+
+def _prev_anchor(anchors: list[int], idx: int) -> int | None:
+    candidates = [a for a in anchors if a < idx]
     return max(candidates) if candidates else None
 
 
-def _next_para(paragraph_starts: list[int], idx: int) -> int | None:
-    candidates = [p for p in paragraph_starts if p > idx]
+def _next_anchor(anchors: list[int], idx: int) -> int | None:
+    candidates = [a for a in anchors if a > idx]
     return min(candidates) if candidates else None
 
 
@@ -744,6 +761,8 @@ def render_reading() -> None:
     total = len(sentences)
     idx = state["idx"]
 
+    page_starts = _page_starts(state.get("sentence_pages") or [])
+
     # Keyboard shortcuts: dispatch before rendering so next/prev update the
     # displayed sentence in the same pass.
     kb = keyboard(key="kb")
@@ -751,7 +770,6 @@ def render_reading() -> None:
     if kb and kb.get("nonce") != st.session_state.get(kb_nonce_key):
         st.session_state[kb_nonce_key] = kb["nonce"]
         action = kb.get("type")
-        paragraph_starts = state.get("paragraph_starts") or [0]
         if action == "next" and idx < total - 1:
             state["idx"] = idx + 1
             idx = state["idx"]
@@ -762,15 +780,15 @@ def render_reading() -> None:
             idx = state["idx"]
             autosave()
             st.rerun()
-        elif action == "next_para":
-            target = _next_para(paragraph_starts, idx)
+        elif action == "next_page":
+            target = _next_anchor(page_starts, idx)
             if target is not None:
                 state["idx"] = target
                 idx = target
                 autosave()
                 st.rerun()
-        elif action == "prev_para":
-            target = _prev_para(paragraph_starts, idx)
+        elif action == "prev_page":
+            target = _prev_anchor(page_starts, idx)
             if target is not None:
                 state["idx"] = target
                 idx = target
@@ -877,22 +895,21 @@ def render_reading() -> None:
                 autosave()
                 st.rerun()
 
-        paragraph_starts = state.get("paragraph_starts") or [0]
-        prev_p = _prev_para(paragraph_starts, idx)
-        next_p = _next_para(paragraph_starts, idx)
+        prev_pg = _prev_anchor(page_starts, idx)
+        next_pg = _next_anchor(page_starts, idx)
         pp_col, np_col = st.columns(2)
         with pp_col:
             if st.button(
-                "⟵ Paragraph", disabled=prev_p is None, use_container_width=True
+                "⟵ Page", disabled=prev_pg is None, use_container_width=True
             ):
-                state["idx"] = int(prev_p)
+                state["idx"] = int(prev_pg)
                 autosave()
                 st.rerun()
         with np_col:
             if st.button(
-                "Paragraph ⟶", disabled=next_p is None, use_container_width=True
+                "Page ⟶", disabled=next_pg is None, use_container_width=True
             ):
-                state["idx"] = int(next_p)
+                state["idx"] = int(next_pg)
                 autosave()
                 st.rerun()
 

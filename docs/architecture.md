@@ -225,7 +225,7 @@ Three regions:
   search box, Sections list.
 - **Reading pane** (left main column) — Active Sentence box (custom
   component) + rendered PDF page with highlights.
-- **Q&A pane** (right main column) — nav buttons (sentence + paragraph),
+- **Q&A pane** (right main column) — nav buttons (sentence + page),
   preset bar (custom component), chat history, chat input.
 
 Every interaction that mutates `study_state` (sentence change, new Q&A turn,

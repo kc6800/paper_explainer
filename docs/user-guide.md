@@ -135,7 +135,7 @@ Layout:
 ```
 ┌─ Sidebar ────────────┬─ Reading pane ─────┬─ Q&A pane ────────┐
 │ PEX v1.0             │                    │ ← Previous Next → │
-│ ← Close Study        │  ┌──────────────┐  │ ⟵ Paragraph ⟶    │
+│ ← Close Study        │  ┌──────────────┐  │ ⟵ Page · Page ⟶  │
 │ <Study name>         │  │ Active       │  │                   │
 │ Sentence 13 / 1300   │  │ sentence     │  │ [Explain] [Def.]  │
 │ [██░░░░░] 1%         │  │ (bordered)   │  │ [Why?]   [Ex.]    │
@@ -164,7 +164,7 @@ Layout:
 
 ### Q&A pane (right)
 
-- **Navigation buttons**: sentence-level and paragraph-level.
+- **Navigation buttons**: sentence-level and page-level.
 - **Preset bar**: four canned questions — *Explain simply*, *Define terms*,
   *Why does this matter?*, *Give an example*. Each uses either your selected
   text (if any) or the full sentence as the scope.
@@ -209,8 +209,8 @@ Study. The newest answer auto-scrolls into view.
 |---|---|
 | `→` | Next sentence |
 | `←` | Previous sentence |
-| `Shift + →` | Next paragraph |
-| `Shift + ←` | Previous paragraph |
+| `Shift + →` | Next page (first sentence on the next source PDF page) |
+| `Shift + ←` | Previous page |
 | `1` | Ask preset 1 — Explain simply |
 | `2` | Ask preset 2 — Define terms |
 | `3` | Ask preset 3 — Why does this matter? |
