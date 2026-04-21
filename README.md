@@ -15,7 +15,10 @@ understand, and ask — all without leaving the page.
 - **Highlight-to-scope** — select a phrase inside the active sentence and a
   preset will target just that phrase instead of the whole sentence.
 - **Navigation**: sentence and paragraph stepping, clickable section outline
-  (from the PDF's embedded TOC when present), full-text search.
+  (from the PDF's embedded TOC when present; Claude infers one
+  semantically when it isn't), full-text search.
+- **In-app source view**: the relevant PDF page is shown in a scrollable
+  pane that auto-scrolls to the highlighted lines of the current sentence.
 - **Keyboard shortcuts**: `←` / `→` for sentences, `Shift+←` / `Shift+→`
   for paragraphs, `1`–`4` for presets, `q` to focus chat, `Esc` to release
   focus.

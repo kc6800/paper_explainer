@@ -31,7 +31,8 @@ No database, no accounts, no server-to-server state.
 | UI | Streamlit |
 | PDF parsing & rendering | PyMuPDF (`fitz`) |
 | Image overlay (highlights) | Pillow |
-| AI | Claude API via the `anthropic` Python SDK (Claude Opus 4.7, adaptive thinking, streaming) |
+| AI | Claude API via the `anthropic` Python SDK (Claude Opus 4.7, adaptive thinking for Q&A, streaming) |
+| Structured outputs (semantic section extraction) | Pydantic models passed to `client.messages.parse()` |
 | Environment config | `python-dotenv` — reads `~/.env` |
 | Storage | ZIP files (`*.pex`) on local disk under `~/PEX_Studies/` |
 
@@ -50,7 +51,8 @@ paper_explainer/
 ├── frontend/                 # Custom Streamlit components (HTML + JS)
 │   ├── sentence_box/index.html
 │   ├── preset_bar/index.html
-│   └── keyboard/index.html
+│   ├── keyboard/index.html
+│   └── pdf_viewer/index.html
 ├── docs/
 │   ├── user-guide.md
 │   └── architecture.md       (← you are here)
@@ -184,7 +186,9 @@ With sentences in hand, PEX computes:
   offset) to a sentence index. The set is sorted.
 - **Sections**: prefer `doc.get_toc(simple=True)` (the PDF's embedded
   outline); for each `(level, title, page)` triple, find the first sentence
-  on that page. Fall back to `is_heading` lines when the PDF has no TOC.
+  on that page. If the PDF has no embedded outline, `extract_structured`
+  returns an empty sections list and the Study-creation caller falls back
+  to `extract_sections_via_llm` (see §8).
 - **`sentence_pages`**: for each sentence, find all lines whose char ranges
   overlap it. Group by page; keep the lowest-numbered page (first one
   touched) and its line bboxes. This drives the Reading pane's PDF viewer.
@@ -270,6 +274,20 @@ on every render so stale listeners don't pile up). Events are filtered:
   mapped to actions and sent back to Python with a `nonce` and the current
   `localStorage["pex_selection"]`.
 
+### `pdf_viewer`
+
+Fixed-height (~620 px) scrollable iframe that displays the current PDF
+page and auto-scrolls *within itself* to the highlighted region. Takes
+two args: the page rendered as a base64-encoded PNG (with highlights
+already composited on top by Python) plus the topmost highlight's native
+y-offset in the rendered image. On each render, the iframe updates the
+`<img>` src and smooth-scrolls its own scroll container so the highlight
+sits ~40 px from the top of the pane. This is done inside the iframe
+rather than on the main Streamlit page because a highlight near the
+bottom of a tall PDF page can't always be brought into view by scrolling
+the outer page — the document just isn't tall enough for that to be
+possible.
+
 ### Cross-iframe selection bridge
 
 Because the sentence text and the preset buttons live in *different*
@@ -281,8 +299,9 @@ PEX gets around this with `localStorage` — which same-origin iframes share.
 
 ## 8. AI integration
 
-The `ask_claude(paper_text, sentence, history, question)` function is the
-single entry point for Q&A. It:
+Two places call Claude:
+
+### `ask_claude(paper_text, sentence, history, question)` — Q&A
 
 1. Builds a `system` array with:
    - a short role prompt (no caching)
@@ -302,6 +321,20 @@ Study gets noticeably cheaper after the first question.
 
 **Adaptive thinking** lets Claude decide per-request whether and how much to
 think. There's no fixed `budget_tokens` — the model self-moderates.
+
+### `extract_sections_via_llm(sentences)` — semantic section outline
+
+Runs once, at Study creation time, **only when the PDF has no embedded
+outline** (`doc.get_toc()` returned nothing). It sends Claude the
+numbered sentences and asks for a structured outline:
+
+- Output is validated via `client.messages.parse(...)` against a Pydantic
+  schema (`{sections: [{title, idx, level}, ...]}`). Invalid entries
+  (out-of-range idx, empty title) are discarded in Python.
+- Returns `[]` if no API key is configured or the call errors — Study
+  creation continues regardless; the feature is opportunistic.
+- Not cached: this is a one-off call per Study, and the result lands in
+  `state.json`.
 
 ---
 

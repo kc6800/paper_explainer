@@ -15,14 +15,15 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 
 import anthropic
 import fitz  # pymupdf
 import streamlit as st
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
-from components import keyboard, preset_bar, sentence_box
+from components import keyboard, pdf_viewer, preset_bar, sentence_box
 from study import (
     STUDIES_DIR,
     create_study,
@@ -122,12 +123,19 @@ def render_sentence_page(
     page_num: int,
     rects: list,
     width_px: int = PDF_VIEWER_WIDTH,
-) -> bytes | None:
-    """Return PNG bytes of the given PDF page with `rects` highlighted."""
+) -> tuple[bytes | None, float]:
+    """Render the PDF page and highlight `rects`.
+
+    Returns `(png_bytes, highlight_offset_px)` where `highlight_offset_px`
+    is the y-coordinate of the topmost highlight in the rendered image's
+    native pixels. Callers use this to scroll the parent page to bring the
+    highlight into view. Returns `(None, 0.0)` if the page is invalid.
+    """
     base, zoom = _get_cached_page(study_key, pdf_bytes, page_num, width_px)
     if base is None:
-        return None
+        return None, 0.0
     img = base.copy()
+    top_y: float | None = None
     if rects:
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -137,10 +145,14 @@ def render_sentence_page(
                 [x0 * zoom, y0 * zoom, x1 * zoom, y1 * zoom],
                 fill=(255, 230, 90, 110),
             )
+            if top_y is None or y0 < top_y:
+                top_y = y0
         img = Image.alpha_composite(img, overlay)
     buf = io.BytesIO()
     img.convert("RGB").save(buf, "PNG")
-    return buf.getvalue()
+    highlight_offset_px = (top_y or 0.0) * zoom
+    return buf.getvalue(), highlight_offset_px
+
 
 load_dotenv(Path.home() / ".env")
 API_KEY = os.environ.get("PEX_CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
@@ -266,10 +278,15 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
                 pieces.append(" ")
             offset = sum(len(p) for p in pieces)
             txt = line["text"]
-            # Ensure headings terminate so the sentence splitter doesn't fuse
-            # them with the next body sentence.
-            if line.get("is_heading") and not txt.rstrip().endswith(
-                (".", "!", "?", ":")
+            # Append a period to un-terminated headings so the sentence
+            # splitter treats them as their own sentence. Gate this on the
+            # heading having at least 2 words — otherwise an emphasized
+            # acronym in body text (e.g. "SGB") gets an unwanted period
+            # and breaks the following sentence.
+            if (
+                line.get("is_heading")
+                and len(line["text"].split()) >= 2
+                and not txt.rstrip().endswith((".", "!", "?", ":"))
             ):
                 txt = txt + "."
             pieces.append(txt)
@@ -319,7 +336,9 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
         else:
             sentence_pages.append({"page": 0, "rects": []})
 
-    # Sections: prefer PDF outline; fall back to detected headings.
+    # Sections: prefer the PDF's embedded outline. If it's empty, leave
+    # `sections` blank here — the caller (Study creation) decides whether
+    # to fill it in via a semantic (LLM) fallback.
     sections: list[dict] = []
     if toc:
         # First sentence index on each page (first line we kept on that page).
@@ -339,14 +358,6 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
                 page += 1
             if idx is not None:
                 sections.append({"title": title.strip(), "idx": idx, "level": level})
-    else:
-        for offset, _piece_len, line in line_offsets:
-            if line.get("is_heading"):
-                sections.append({
-                    "title": line["text"].strip().rstrip("."),
-                    "idx": idx_for_offset(offset),
-                    "level": 1,
-                })
 
     # Deduplicate by idx, keeping first occurrence.
     seen: set[int] = set()
@@ -366,10 +377,28 @@ def extract_structured(pdf_bytes: bytes, progress_callback=None) -> dict:
     }
 
 
-_ABBREVS = {
-    "e.g", "i.e", "cf", "etc", "al", "fig", "eq", "eqs", "ref", "refs",
-    "vs", "approx", "no", "vol", "pp", "ch", "sec", "mr", "mrs", "dr", "prof",
-}
+_ABBREVS = (
+    "e.g", "i.e", "cf", "etc", "et al", "al", "fig", "eq", "eqs",
+    "ref", "refs", "vs", "approx", "no", "vol", "p", "pp", "ch", "sec",
+    "mr", "mrs", "dr", "prof",
+)
+
+# Matches a known abbreviation at the tail of the previous chunk. The
+# leading `(?:^|[\s(])` anchors the abbreviation as its own word so it
+# doesn't spuriously match inside another word.
+_ABBREV_TAIL = re.compile(
+    r"(?:^|[\s(])(?:" + "|".join(re.escape(a) for a in _ABBREVS) + r")\.$",
+    re.IGNORECASE,
+)
+
+# Matches an "initial" — a single uppercase letter followed by a period at
+# the tail of the previous chunk (e.g. the `J.` in `J. Smith`).
+_INITIAL_TAIL = re.compile(r"(?:^|\s)[A-Z]\.$")
+
+# A bracketed/parenthesized reference followed by a lowercase word is a
+# citation continuation, not a new sentence — e.g. `SGB. [20] uses ...` or
+# `Smith. (2019) shows ...`.
+_CITATION_CONT = re.compile(r"^[\[(][^\]\)]*[\])]\s+[a-z]")
 
 
 def split_sentences(text: str) -> list[str]:
@@ -381,8 +410,11 @@ def split_sentences(text: str) -> list[str]:
             continue
         if out:
             prev = out[-1]
-            m = re.search(r"(\w+)\.$", prev)
-            if m and m.group(1).lower() in _ABBREVS:
+            if (
+                _ABBREV_TAIL.search(prev)
+                or _INITIAL_TAIL.search(prev)
+                or _CITATION_CONT.match(piece)
+            ):
                 out[-1] = prev + " " + piece
                 continue
         out.append(piece)
@@ -394,6 +426,74 @@ def split_sentences(text: str) -> list[str]:
 @st.cache_resource
 def get_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=API_KEY)
+
+
+class _LLMSection(BaseModel):
+    title: str
+    idx: int
+    level: int
+
+
+class _LLMSectionList(BaseModel):
+    sections: list[_LLMSection]
+
+
+def extract_sections_via_llm(sentences: list[str]) -> list[dict]:
+    """Ask Claude to infer a section outline when the PDF has no embedded TOC.
+
+    Returns a list of `{title, idx, level}` dicts. Degrades to `[]` if there's
+    no API key or the call fails — the feature is opportunistic, not
+    essential for Study creation.
+    """
+    if not API_KEY or not sentences:
+        return []
+    numbered = "\n".join(f"[{i}] {s}" for i, s in enumerate(sentences))
+    prompt = (
+        "You are structuring a research paper into a table of contents.\n\n"
+        "Below are the paper's sentences, numbered from 0. Identify the "
+        "section and subsection boundaries that reflect the paper's natural "
+        "structure (e.g., Abstract, Introduction, Related Work, Method, "
+        "Experiments, Results, Discussion, Conclusion, References, "
+        "Acknowledgements). Prefer the section titles as they literally "
+        "appear in the text when you can spot them.\n\n"
+        "For each section return:\n"
+        "  - title: a concise heading as it would appear in a table of "
+        "contents\n"
+        "  - idx: the sentence index where the section begins\n"
+        "  - level: 1 for top-level, 2 for subsection, 3 for sub-subsection\n\n"
+        "Be selective — typical research papers have 5–20 top-level sections. "
+        "Do not include every paragraph. Output sections sorted by `idx`.\n\n"
+        f"Sentences:\n{numbered}"
+    )
+    try:
+        response = get_client().messages.parse(
+            model=MODEL,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+            output_format=_LLMSectionList,
+        )
+    except Exception:
+        return []
+    result = getattr(response, "parsed_output", None)
+    if result is None:
+        return []
+    total = len(sentences)
+    cleaned: list[dict] = []
+    seen: set[int] = set()
+    for s in sorted(result.sections, key=lambda s: s.idx):
+        idx = int(s.idx)
+        if not (0 <= idx < total) or idx in seen:
+            continue
+        title = s.title.strip()
+        if not title:
+            continue
+        cleaned.append({
+            "title": title,
+            "idx": idx,
+            "level": max(1, min(3, int(s.level))),
+        })
+        seen.add(idx)
+    return cleaned
 
 
 def ask_claude(
@@ -537,6 +637,20 @@ def render_home() -> None:
                         payload["pdf_bytes"], progress_callback=_on_progress
                     )
                     pbar.progress(1.0, text="Splitting into sentences…")
+                    # If the PDF had no embedded table of contents, fall back
+                    # to a semantic (LLM) section inference. The font-size
+                    # heuristic used previously missed a lot of papers.
+                    if not extracted["sections"]:
+                        pbar.progress(
+                            1.0,
+                            text=(
+                                "No embedded outline — detecting sections "
+                                "with Claude…"
+                            ),
+                        )
+                        extracted["sections"] = extract_sections_via_llm(
+                            extracted["sentences"]
+                        )
                     n_sent = len(extracted["sentences"])
                     n_sec = len(extracted["sections"])
                     n_para = len(extracted["paragraph_starts"])
@@ -731,7 +845,7 @@ def render_reading() -> None:
         if loc and st.session_state.paper_bytes:
             page_num = int(loc.get("page", 0))
             rects = loc.get("rects", []) or []
-            img_bytes = render_sentence_page(
+            img_bytes, highlight_offset_px = render_sentence_page(
                 st.session_state.paper_bytes,
                 str(st.session_state.study_path),
                 page_num,
@@ -739,7 +853,11 @@ def render_reading() -> None:
             )
             if img_bytes:
                 st.caption(f"Page {page_num + 1}")
-                st.image(img_bytes, use_container_width=True)
+                # The viewer is a fixed-height scrollable pane whose own
+                # scroll is updated to bring the highlight into view on
+                # every render. Keeps the pane anchored on the Streamlit
+                # page regardless of where the highlight sits in the PDF.
+                pdf_viewer(img_bytes, highlight_offset_px, key="pdf_viewer")
         else:
             st.caption(
                 "PDF viewer not available for this Study — re-create it from the "

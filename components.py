@@ -5,13 +5,17 @@
   to `localStorage["pex_selection"]` so a separate iframe can read it.
 - `preset_bar`    — renders the four preset buttons. On click, reads
   `localStorage["pex_selection"]` and returns `{preset, selection, nonce}`.
+- `keyboard`      — zero-height iframe capturing global keyboard shortcuts.
+- `pdf_viewer`    — fixed-height scrollable pane showing the current PDF
+  page; auto-scrolls its own scroll container to the highlighted region.
 
-Both iframes are served from the same origin (the Streamlit server), so they
+All iframes are served from the same origin (the Streamlit server), so they
 share `localStorage`.
 """
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +32,9 @@ _preset_bar = components.declare_component(
 _keyboard = components.declare_component(
     "pex_keyboard", path=str(_FRONTEND / "keyboard")
 )
+_pdf_viewer = components.declare_component(
+    "pex_pdf_viewer", path=str(_FRONTEND / "pdf_viewer")
+)
 
 
 def sentence_box(sentence: str, key: Optional[str] = None) -> None:
@@ -40,3 +47,23 @@ def preset_bar(key: Optional[str] = None) -> Optional[dict]:
 
 def keyboard(key: Optional[str] = None) -> Optional[dict]:
     return _keyboard(key=key, default=None)
+
+
+def pdf_viewer(
+    png_bytes: bytes,
+    highlight_offset_px: float,
+    key: Optional[str] = None,
+) -> None:
+    """Render a scrollable PDF-page pane that auto-scrolls to a highlight.
+
+    `png_bytes` is the rendered page (with highlight rectangles already
+    composited on top). `highlight_offset_px` is the y-coordinate of the
+    topmost highlight in the native pixels of the rendered image.
+    """
+    b64 = base64.b64encode(png_bytes).decode("ascii")
+    _pdf_viewer(
+        image_b64=b64,
+        highlight_offset_px=float(highlight_offset_px),
+        key=key,
+        default=None,
+    )

@@ -103,8 +103,12 @@ PEX will show a progress bar while it parses the PDF. Three things happen:
 - **Text extraction** — it scans every page, drops page numbers / running
   heads, and filters out footnotes so they don't interleave with the body.
 - **Structure detection** — paragraph breaks are inferred from line spacing;
-  section headings come from the PDF's embedded outline if present, or from
-  font-size detection otherwise.
+  section headings come from the PDF's embedded outline when the PDF
+  provides one. If it doesn't, PEX falls back to a **semantic extraction**
+  (one Claude call) that reads the numbered sentences and returns a
+  structured outline. That step is labeled
+  *"No embedded outline — detecting sections with Claude…"* in the progress
+  area, and adds a few seconds plus a small API cost to Study creation.
 - **Per-sentence page mapping** — every sentence is tagged with the page it
   appears on and the line bounding boxes to highlight.
 
@@ -153,7 +157,10 @@ Layout:
   shaded rectangle. Select text inside to scope preset questions to just that
   phrase (see below).
 - **Source PDF viewer** — the original page the sentence comes from, rendered
-  as an image, with the sentence's line(s) highlighted in soft yellow.
+  as an image, with the sentence's line(s) highlighted in soft yellow. The
+  viewer is a fixed-height scrollable pane that auto-scrolls internally to
+  the highlight on every sentence change, so the pane's position on the
+  overall page never jumps around.
 
 ### Q&A pane (right)
 
@@ -250,7 +257,8 @@ Check that `~/.env` exists and has a line `PEX_CLAUDE_API_KEY=sk-ant-...` with
 no quotes around the key. Restart the Streamlit server after editing.
 
 **The Sections list is empty.**
-The PDF has no embedded outline and no font-size-distinguishable headings.
+The PDF has no embedded outline and the semantic (LLM) fallback either
+wasn't run (no API key at Study creation) or didn't find anything.
 Search still works; you can navigate by sentence and paragraph.
 
 **The PDF viewer shows a message instead of the page.**

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #container {
+    height: 620px;
+    overflow: auto;
+    border: 1px solid #c4cbd4;
+    border-radius: 8px;
+    background: #fff;
+  }
+  #container img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>
+</head>
+<body>
+<div id="container"><img id="pdf-img" alt="Source PDF page" /></div>
+
+<script>
+  const container = document.getElementById("container");
+  const img = document.getElementById("pdf-img");
+  let pendingOffset = 0;
+
+  function send(type, data) {
+    window.parent.postMessage(
+      Object.assign({ isStreamlitMessage: true, type }, data || {}),
+      "*",
+    );
+  }
+
+  function scrollToHighlight() {
+    if (!img.naturalWidth) return;
+    const ratio = img.clientWidth / img.naturalWidth;
+    // 40 px padding so the highlight isn't flush against the top edge.
+    const target = pendingOffset * ratio - 40;
+    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+  }
+
+  // Fires when a new src finishes loading. Covers the common case where
+  // highlights differ and the image bytes change.
+  img.addEventListener("load", scrollToHighlight);
+
+  window.addEventListener("message", (event) => {
+    const data = event.data;
+    if (!data || data.type !== "streamlit:render") return;
+    const args = data.args || {};
+    pendingOffset = args.highlight_offset_px || 0;
+    const nextSrc = "data:image/png;base64," + (args.image_b64 || "");
+    if (img.src === nextSrc) {
+      // Same image bytes — still scroll (in case only the offset changed).
+      scrollToHighlight();
+    } else {
+      img.src = nextSrc;
+    }
+  });
+
+  send("streamlit:componentReady", { apiVersion: 1 });
+  send("streamlit:setFrameHeight", { height: 640 });
+</script>
+</body>
+</html>
