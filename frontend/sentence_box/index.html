@@ -11,33 +11,27 @@
   }
   body { padding: 4px 0; }
   #sentence {
-    font-size: 1.4rem;
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 400;
     line-height: 1.45;
-    padding: 14px 18px;
+    padding: 8px 12px;
     cursor: text;
     border: 1px solid #c4cbd4;
-    border-radius: 10px;
+    border-radius: 8px;
     background: #fafbfc;
   }
   #sentence::selection, #sentence *::selection { background: #ffe58f; }
   .scope {
     font-size: 0.8rem;
     color: #6a737d;
-    margin-top: 10px;
-    min-height: 1.15em;
+    margin-top: 6px;
   }
-  .hint {
-    font-size: 0.75rem;
-    color: #8a8a8a;
-    margin-top: 4px;
-  }
+  .scope:empty { display: none; }
 </style>
 </head>
 <body>
   <div id="sentence"></div>
   <div class="scope" id="scope"></div>
-  <div class="hint">Highlight a word or phrase to scope the next preset question to that selection. Otherwise, the full sentence is used.</div>
 
 <script>
   const SET_HEIGHT = "streamlit:setFrameHeight";
